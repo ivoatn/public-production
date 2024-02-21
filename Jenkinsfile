@@ -9,21 +9,18 @@ pipeline {
         DOCKER_REGISTRY = "registry.digitalocean.com/jenkins-test-repository"
         DOCKER_IMAGE_NAME = "nginx-simple"
         KUBE_DEPLOYMENT_NAMES = "nginx-deployment nginx-canary-deployment" // Update to include all deployment names
-        PREVIOUS_IMAGE_VERSIONS = [:] // Map to store previous image versions for rollback
+        PREVIOUS_DIGEST = sh(script: "docker image inspect --format='{{index .RepoDigests 0}}' ${DOCKER_REGISTRY}/${DOCKER_IMAGE_NAME}:${RELEASE_VERSION}", returnStdout: true).trim()
     }
 
     stages {
         stage('Deploy to Production') {
             steps {
                 script {
-                    // Save current image version for rollback
-                    for (deploymentName in KUBE_DEPLOYMENT_NAMES.split()) {
-                        PREVIOUS_IMAGE_VERSIONS[deploymentName] = sh(
-                            script: "kubectl get deployment/${deploymentName} -o=jsonpath='{.spec.template.spec.containers[?(@.name==\"${DOCKER_IMAGE_NAME}\")].image}'",
-                            returnStdout: true
-                        ).trim()
+                    // Save current digest for rollback
+                    PREVIOUS_DIGEST = sh(script: "docker image inspect --format='{{index .RepoDigests 0}}' ${DOCKER_REGISTRY}/${DOCKER_IMAGE_NAME}:${RELEASE_VERSION}", returnStdout: true).trim()
 
-                        // Perform a rollout update for the Kubernetes deployment
+                    // Perform a rollout update for the Kubernetes deployment
+                    for (deploymentName in KUBE_DEPLOYMENT_NAMES.split()) {
                         sh "kubectl set image deployment/${deploymentName} ${DOCKER_IMAGE_NAME}=${DOCKER_REGISTRY}/${DOCKER_IMAGE_NAME}:${RELEASE_VERSION}"
                     }
                 }
@@ -67,8 +64,8 @@ pipeline {
 }
 
 def rollBackDeployment() {
-    // Rollback deployment to previous image versions
+    // Rollback deployment to previous digest
     for (deploymentName in KUBE_DEPLOYMENT_NAMES.split()) {
-        sh "kubectl set image deployment/${deploymentName} ${DOCKER_IMAGE_NAME}=${PREVIOUS_IMAGE_VERSIONS[deploymentName]}"
+        sh "kubectl set image deployment/${deploymentName} ${DOCKER_IMAGE_NAME}=${PREVIOUS_DIGEST}"
     }
 }
