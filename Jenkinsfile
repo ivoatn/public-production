@@ -8,8 +8,8 @@ pipeline {
     environment {
         DOCKER_REGISTRY = "registry.digitalocean.com/jenkins-test-repository"
         DOCKER_IMAGE_NAME = "nginx-simple"
-        KUBE_DEPLOYMENT_NAME = "your-deployment-name" // Replace with your actual deployment name
-        PREVIOUS_IMAGE_VERSION = "" // Variable to store previous image version for rollback
+        KUBE_DEPLOYMENT_NAMES = "nginx-deployment nginx-canary-deployment" // Update to include all deployment names
+        PREVIOUS_IMAGE_VERSIONS = [:] // Map to store previous image versions for rollback
     }
 
     stages {
@@ -17,13 +17,15 @@ pipeline {
             steps {
                 script {
                     // Save current image version for rollback
-                    PREVIOUS_IMAGE_VERSION = sh(
-                        script: "kubectl get deployment/${KUBE_DEPLOYMENT_NAME} -o=jsonpath='{.spec.template.spec.containers[?(@.name==\"${DOCKER_IMAGE_NAME}\")].image}'",
-                        returnStdout: true
-                    ).trim()
+                    for (deploymentName in KUBE_DEPLOYMENT_NAMES.split()) {
+                        PREVIOUS_IMAGE_VERSIONS[deploymentName] = sh(
+                            script: "kubectl get deployment/${deploymentName} -o=jsonpath='{.spec.template.spec.containers[?(@.name==\"${DOCKER_IMAGE_NAME}\")].image}'",
+                            returnStdout: true
+                        ).trim()
 
-                    // Perform a rollout update for the Kubernetes deployment
-                    sh "kubectl set image deployment/${KUBE_DEPLOYMENT_NAME} ${DOCKER_IMAGE_NAME}=${DOCKER_REGISTRY}/${DOCKER_IMAGE_NAME}:${RELEASE_VERSION}"
+                        // Perform a rollout update for the Kubernetes deployment
+                        sh "kubectl set image deployment/${deploymentName} ${DOCKER_IMAGE_NAME}=${DOCKER_REGISTRY}/${DOCKER_IMAGE_NAME}:${RELEASE_VERSION}"
+                    }
                 }
             }
         }
@@ -33,7 +35,9 @@ pipeline {
                 script {
                     try {
                         // Verify deployment
-                        sh "kubectl rollout status deployment/${KUBE_DEPLOYMENT_NAME}"
+                        for (deploymentName in KUBE_DEPLOYMENT_NAMES.split()) {
+                            sh "kubectl rollout status deployment/${deploymentName}"
+                        }
                     } catch (Exception e) {
                         echo "Deployment verification failed: ${e.message}"
                         rollBackDeployment()
@@ -63,6 +67,8 @@ pipeline {
 }
 
 def rollBackDeployment() {
-    // Rollback deployment to previous image version
-    sh "kubectl set image deployment/${KUBE_DEPLOYMENT_NAME} ${DOCKER_IMAGE_NAME}=${PREVIOUS_IMAGE_VERSION}"
+    // Rollback deployment to previous image versions
+    for (deploymentName in KUBE_DEPLOYMENT_NAMES.split()) {
+        sh "kubectl set image deployment/${deploymentName} ${DOCKER_IMAGE_NAME}=${PREVIOUS_IMAGE_VERSIONS[deploymentName]}"
+    }
 }
