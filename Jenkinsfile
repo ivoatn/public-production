@@ -60,6 +60,55 @@ pipeline {
                 }
             }
         }
+
+        stage('Performance Test') {
+            parallel {
+                stage('Performance Tests with k6') {
+                    steps {
+                        script {
+                            try {
+                                // Run k6 performance tests
+                                sh 'k6 run basic-perftest.js'
+                            } catch (Exception e) {
+                                echo "k6 performance test failed: ${e.message}"
+                                rollBackDeployment()
+                            }
+                        }
+                    }
+                }
+
+                stage('Performance Tests with JMeter') {
+                    steps {
+                        script {
+                            try {
+                                // Run JMeter test
+                                sh '/var/lib/jenkins/apache-jmeter-5.5/bin/jmeter.sh -n -t performance-test.jmx -l performance_reports/test-results.jtl'
+
+                                // Run JMeter test with Performance Plugin
+                                perfReport([
+                                  sourceDataFiles: 'performance_reports/*.jtl', // Adjust the file extension if necessary
+                                  modePerformancePerTestCase: true,
+                                  relativeFailedThresholdNegative: 0,
+                                  relativeFailedThresholdPositive: 0,
+                                  modeThroughput: true
+                                ])
+
+                                // Check for failures in reports
+                                if (findMatches(text: readFile('performance_reports/summary.txt'), pattern: 'FAILED').count > 0) {
+                                    echo "Performance test failed!"
+                                    rollBackDeployment()
+                                } else {
+                                    echo "Performance test passed."
+                                }
+                            } catch (Exception e) {
+                                echo "JMeter test failed: ${e.message}"
+                                rollBackDeployment()
+                            }
+                        }
+                    }
+                }
+            }
+        } // This closing brace should be on the same level as the opening one
     }
 }
 
